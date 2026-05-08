@@ -40,6 +40,7 @@ GLOB_LIMIT       = int(os.environ.get("HOMELAB_MCP_GLOB_LIMIT", "200"))
 GREP_LIMIT       = int(os.environ.get("HOMELAB_MCP_GREP_LIMIT", "50"))
 SEARCH_LIMIT     = int(os.environ.get("HOMELAB_MCP_SEARCH_LIMIT", "20"))
 FETCH_MAX_CHARS  = int(os.environ.get("HOMELAB_MCP_FETCH_MAX_CHARS", "50000"))
+DOC_MAX_CHARS    = int(os.environ.get("HOMELAB_MCP_DOC_MAX_CHARS", "200000"))
 
 mcp = FastMCP("Homelab MCP", host=HOST, port=PORT)
 _md = MarkItDown()
@@ -159,6 +160,27 @@ def read_file(path: str, limit: int = 0) -> str:
 
     with open(p) as f:
         return f.read()
+
+
+@mcp.tool()
+def read_doc(path: str) -> str:
+    """Read a document file (PDF, DOCX, PPTX, XLSX, image, audio, etc.) and return the content as Markdown text. Use this for binary documents that read_file can't parse. path: full path, or relative path under the first root."""
+    p = _safe_path(path)
+    if not p:
+        return _err("Path outside roots")
+    if not os.path.isfile(p):
+        return _err(f"Not found: {path}")
+
+    try:
+        result = _md.convert(p)
+        text = result.text_content or ""
+    except Exception as e:
+        return _err(f"Conversion failed: {e}")
+
+    if len(text) > DOC_MAX_CHARS:
+        text = text[:DOC_MAX_CHARS] + f"\n\n... [truncated, {len(text)} chars total]"
+
+    return text
 
 
 @mcp.tool()

@@ -37,14 +37,15 @@ FastMCP over streamable HTTP. Each tool is a Python function decorated with
 
 ## Tools
 
-| Tool         | Purpose                                                |
-|--------------|--------------------------------------------------------|
-| `ask_claude` | Delegate to Claude (opus or sonnet, medium or max)     |
-| `read_file`  | Read a UTF-8 text file inside a configured root        |
-| `glob_files` | Find files by glob pattern across roots                |
-| `grep_files` | Case-insensitive regex search across roots             |
-| `web_search` | SearXNG-aggregated public web search                   |
-| `web_fetch`  | Fetch a URL (HTML, PDF, DOCX) and convert to Markdown  |
+| Tool         | Purpose                                                       |
+|--------------|---------------------------------------------------------------|
+| `ask_claude` | Delegate to Claude (opus or sonnet, medium or max)            |
+| `read_file`  | Read a UTF-8 text file inside a configured root               |
+| `read_doc`   | Read a local PDF / DOCX / PPTX / XLSX and convert to Markdown |
+| `glob_files` | Find files by glob pattern across roots                       |
+| `grep_files` | Case-insensitive regex search across roots                    |
+| `web_search` | SearXNG-aggregated public web search                          |
+| `web_fetch`  | Fetch a URL (HTML, PDF, DOCX) and convert to Markdown         |
 
 ## Configuration
 
@@ -64,6 +65,7 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_GREP_LIMIT`       | `50`                                               | Default `max_results` for `grep_files`                               |
 | `HOMELAB_MCP_SEARCH_LIMIT`     | `20`                                               | Result cap for `web_search`                                          |
 | `HOMELAB_MCP_FETCH_MAX_CHARS`  | `50000`                                            | Character cap for `web_fetch` output                                 |
+| `HOMELAB_MCP_DOC_MAX_CHARS`    | `200000`                                           | Character cap for `read_doc` output                                  |
 
 **Roots** are the directories the server may read, glob, and grep within.
 The file tools refuse paths that resolve outside this list. `HOMELAB_MCP_ROOTS`
@@ -108,6 +110,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.2   | 2026-05-08 | New `read_doc` tool — reads local PDF / DOCX / PPTX / XLSX via MarkItDown. Config: `HOMELAB_MCP_DOC_MAX_CHARS` (default `200000`). |
 | 0.1.1   | 2026-05-08 | `HOMELAB_MCP_CLAUDE_BIN` env var lets deployments pin the Claude CLI binary path when it isn't on the service's `$PATH`. |
 | 0.1.0   | 2026-05-08 | Initial release — six tools (`ask_claude`, `read_file`, `glob_files`, `grep_files`, `web_search`, `web_fetch`), multi-root, env-driven configuration |
 
