@@ -17,9 +17,10 @@ from mcp.server.fastmcp import FastMCP
 
 # ── config ────────────────────────────────────────────────────────
 
-HOST    = os.environ.get("HOMELAB_MCP_HOST", "0.0.0.0")
-PORT    = int(os.environ.get("HOMELAB_MCP_PORT", "1603"))
-SEARXNG = os.environ.get("HOMELAB_MCP_SEARXNG", "http://localhost:8080")
+HOST       = os.environ.get("HOMELAB_MCP_HOST", "0.0.0.0")
+PORT       = int(os.environ.get("HOMELAB_MCP_PORT", "1603"))
+SEARXNG    = os.environ.get("HOMELAB_MCP_SEARXNG", "http://localhost:8080")
+CLAUDE_BIN = os.environ.get("HOMELAB_MCP_CLAUDE_BIN", "claude")
 
 ROOTS = [
     os.path.realpath(os.path.expanduser(p))
@@ -80,7 +81,7 @@ def ask_claude(
 ) -> str:
     """Ask Claude (a more capable model) when you need deep research, complex reasoning, or analysis you can't do yourself. Returns Claude's answer. model: 'sonnet' or 'opus'. effort: 'medium' or 'max'. timeout: seconds (default 600)."""
     cmd = [
-        "claude", "-p",
+        CLAUDE_BIN, "-p",
         "--model", model,
         "--tools", "Read,Glob,Grep,WebSearch,WebFetch",
         "--permission-mode", "bypassPermissions",
@@ -99,7 +100,7 @@ def ask_claude(
             start_new_session=True,
         )
     except FileNotFoundError:
-        return _err("Claude CLI not found on PATH")
+        return _err(f"Claude CLI not found: {CLAUDE_BIN}")
 
     try:
         stdout, stderr = proc.communicate(input=prompt, timeout=timeout)

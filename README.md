@@ -56,6 +56,7 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_HOST`             | `0.0.0.0`                                          | Listen address                                                       |
 | `HOMELAB_MCP_PORT`             | `1603`                                             | Listen port                                                          |
 | `HOMELAB_MCP_SEARXNG`          | `http://localhost:8080`                            | SearXNG endpoint for `web_search`                                    |
+| `HOMELAB_MCP_CLAUDE_BIN`       | `claude`                                           | Claude CLI binary used by `ask_claude`. Default looks up `claude` on `$PATH`; set to an absolute path when the binary lives outside the service's `$PATH` (e.g. `/home/me/.local/bin/claude`). |
 | `HOMELAB_MCP_ROOTS`            | `$PWD`                                             | Colon-separated roots, like `$PATH`                                  |
 | `HOMELAB_MCP_SKIP_DIRS`        | (see below)                                        | Comma-separated dir names skipped by `glob_files` / `grep_files` |
 | `HOMELAB_MCP_MAX_FILE_BYTES`   | `10485760` (10 MB)                                 | `read_file` byte cap when called without `limit`                     |
@@ -107,6 +108,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.1   | 2026-05-08 | `HOMELAB_MCP_CLAUDE_BIN` env var lets deployments pin the Claude CLI binary path when it isn't on the service's `$PATH`. |
 | 0.1.0   | 2026-05-08 | Initial release — six tools (`ask_claude`, `read_file`, `glob_files`, `grep_files`, `web_search`, `web_fetch`), multi-root, env-driven configuration |
 
 ## License
