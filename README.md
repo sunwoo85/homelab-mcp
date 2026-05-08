@@ -56,18 +56,30 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_PORT`             | `1603`                                             | Listen port                                                          |
 | `HOMELAB_MCP_SEARXNG`          | `http://localhost:8080`                            | SearXNG endpoint for `web_search`                                    |
 | `HOMELAB_MCP_ROOTS`            | `$PWD`                                             | Colon-separated roots, like `$PATH`                                  |
-| `HOMELAB_MCP_SKIP_DIRS`        | `venv,.venv,node_modules,__pycache__,.git,.cache`  | Comma-separated dir names skipped by `glob_files` / `grep_files`. Replaces the default; copy and append to extend. |
+| `HOMELAB_MCP_SKIP_DIRS`        | (see below)                                        | Comma-separated dir names skipped by `glob_files` / `grep_files` |
 | `HOMELAB_MCP_MAX_FILE_BYTES`   | `10485760` (10 MB)                                 | `read_file` byte cap when called without `limit`                     |
 | `HOMELAB_MCP_GLOB_LIMIT`       | `200`                                              | Result cap for `glob_files`                                          |
 | `HOMELAB_MCP_GREP_LIMIT`       | `50`                                               | Default `max_results` for `grep_files`                               |
 | `HOMELAB_MCP_SEARCH_LIMIT`     | `20`                                               | Result cap for `web_search`                                          |
 | `HOMELAB_MCP_FETCH_MAX_CHARS`  | `50000`                                            | Character cap for `web_fetch` output                                 |
 
-Multiple roots:
+**Roots** are the directories the server may read, glob, and grep within.
+The file tools refuse paths that resolve outside this list. `HOMELAB_MCP_ROOTS`
+is a colon-separated list — same convention as `$PATH`. When unset it
+defaults to `$PWD`: the directory `start.sh` was launched from.
 
 ```bash
+# Single root
+HOMELAB_MCP_ROOTS=/home/me/projects
+
+# Multiple roots — both are searchable; tools return absolute paths so
+# results are unambiguous across roots
 HOMELAB_MCP_ROOTS=/home/me/projects:/home/me/services
 ```
+
+`HOMELAB_MCP_SKIP_DIRS` defaults to
+`venv,.venv,node_modules,__pycache__,.git,.cache`. Setting the env var
+**replaces** the default — to extend, copy the default and append.
 
 `ask_claude` requires the `claude` CLI on `$PATH`. The tool registers either
 way; calls fail with a clean error if `claude` is missing.
