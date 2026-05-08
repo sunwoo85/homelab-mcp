@@ -37,6 +37,14 @@ do_stop() {
     echo "Homelab MCP stopped"
 }
 
+do_logs() {
+    if systemctl --user is-active --quiet homelab-mcp 2>/dev/null; then
+        journalctl --user -u homelab-mcp -f
+    else
+        tail -f "$LOG"
+    fi
+}
+
 do_status() {
     if is_running; then
         local pid; pid=$(pgrep -f "homelab-mcp\.py" | head -1)
@@ -62,7 +70,7 @@ case "${1:-start}" in
     stop)    do_stop ;;
     restart) do_stop; sleep 1; do_start ;;
     status)  do_status ;;
-    logs)    tail -f "$LOG" ;;
+    logs)    do_logs ;;
     *)
         cat <<USAGE
 Usage: homelab-mcp {start|stop|restart|status|logs}
@@ -71,7 +79,7 @@ Usage: homelab-mcp {start|stop|restart|status|logs}
   stop      Stop Homelab MCP
   restart   Restart
   status    Show state and health
-  logs      Tail log file
+  logs      Follow log (journal under systemd, file otherwise)
 USAGE
         ;;
 esac

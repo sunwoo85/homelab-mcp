@@ -164,7 +164,7 @@ def read_file(path: str, limit: int = 0) -> str:
 
 @mcp.tool()
 def read_doc(path: str) -> str:
-    """Read a document file (PDF, DOCX, PPTX, XLSX, image, audio, etc.) and return the content as Markdown text. Use this for binary documents that read_file can't parse. path: full path, or relative path under the first root."""
+    """Read a document file (PDF, Word, Excel, PowerPoint, or Outlook .msg) and return the content as Markdown text. Use this for binary documents that read_file can't parse. path: full path, or relative path under the first root."""
     p = _safe_path(path)
     if not p:
         return _err("Path outside roots")
