@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+logs/
+*.log
+.env
+.claude/
+PLAN.md
