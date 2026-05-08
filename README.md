@@ -1,12 +1,12 @@
 # Homelab MCP 🛠
 
-An MCP tool server for homelabs. Six tools, three dependencies, one file.
+An MCP tool server for homelabs. Seven tools, three dependencies, one file.
 
 Designed by SK. Built by Claude.
 
 ## Overview
 
-A FastMCP HTTP server exposing six tools to MCP clients (Claude Code, IDE
+A FastMCP HTTP server exposing seven tools to MCP clients (Claude Code, IDE
 plugins, custom agents). Local or hosted LLMs use these tools to read files,
 search the web, fetch URLs, and delegate work to Claude. Around 300 lines
 of Python, single port, environment-driven configuration.
