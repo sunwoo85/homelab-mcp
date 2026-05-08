@@ -1,4 +1,4 @@
-# Homelab MCP
+# Homelab MCP 🛠
 
 An MCP tool server for homelabs. Six tools, three dependencies, one file.
 
@@ -28,7 +28,7 @@ Listens on `:1603`. Roots default to `$PWD`; SearXNG defaults to
 ## How It Works
 
 ```
-MCP client ──► :1603 (homelab-mcp) ──► claude CLI / SearXNG / filesystem
+MCP client ──► :1603 (homelab-mcp) ──► Claude CLI / SearXNG / filesystem
 ```
 
 FastMCP over streamable HTTP. Each tool is a Python function decorated with
@@ -81,8 +81,8 @@ HOMELAB_MCP_ROOTS=/home/me/projects:/home/me/services
 `venv,.venv,node_modules,__pycache__,.git,.cache`. Setting the env var
 **replaces** the default — to extend, copy the default and append.
 
-`ask_claude` requires the `claude` CLI on `$PATH`. The tool registers either
-way; calls fail with a clean error if `claude` is missing.
+`ask_claude` requires Claude CLI — the `claude` binary on `$PATH`. The tool
+registers either way; calls fail with a clean error if `claude` is missing.
 
 ## Process Manager
 
@@ -93,6 +93,8 @@ way; calls fail with a clean error if `claude` is missing.
 ./start.sh status     # state + MCP handshake
 ./start.sh logs       # tail log file
 ```
+
+Run `./start.sh help` to see this list inline.
 
 Optional alias:
 
