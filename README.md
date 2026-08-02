@@ -144,6 +144,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.6   | 2026-08-02 | Search tools: per-parameter schema descriptions with when-to-use triggers (calling LLMs were sending `query` only and ignoring `time_range`/`topic`/`category`); tool descriptions slimmed accordingly. No behavior change. |
 | 0.1.5   | 2026-08-02 | Configurable search engines: `HOMELAB_MCP_SEARCH_PRIMARY` / `_BACKUP` choose SearXNG or Tavily behind `web_search` / `web_search_backup`; descriptions and parameters follow the engine. New `web_search_semantic` tool — Exa neural search, registered when `HOMELAB_MCP_EXA_KEY` is set. `ask_claude` refreshed: full effort range (`low`–`max`), timeout auto-scales with model and effort, model/effort validated. |
 | 0.1.4   | 2026-08-02 | Optional `web_search_backup` tool — Tavily-backed escalation search, registered when `HOMELAB_MCP_TAVILY_KEY` is set. The calling LLM decides when SearXNG results aren't good enough; `web_search` itself is unchanged. |
 | 0.1.3   | 2026-05-08 | Pin MarkItDown extras (`pdf,docx,pptx,xlsx,xls,outlook`) so `read_doc` actually parses documents — was registered but inert in `0.1.2`. `start.sh logs` now follows the journal under systemd, the file otherwise. |

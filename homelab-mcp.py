@@ -12,8 +12,10 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
 import httpx
+from pydantic import Field
 from markitdown import MarkItDown
 from mcp.server.fastmcp import FastMCP
 
@@ -295,9 +297,9 @@ def grep_files(
 # its own tool (web_search_semantic, further down).
 
 def _search_searxng(
-    query: str,
-    time_range: str = "",
-    language: str = "all",
+    query: Annotated[str, Field(description="The search query.")],
+    time_range: Annotated[str, Field(description="Set 'day', 'week', 'month', or 'year' when recency matters (news, releases, current data). '' = any time.")] = "",
+    language: Annotated[str, Field(description="Set a code like 'en' or 'ko' when the query targets a specific language or region; 'all' = no restriction.")] = "all",
 ) -> str:
     params: dict = {"q": query, "format": "json"}
     if time_range:
@@ -345,10 +347,10 @@ def web_fetch(url: str) -> str:
 
 
 def _search_tavily(
-    query: str,
-    time_range: str = "",
-    topic: str = "general",
-    depth: str = "advanced",
+    query: Annotated[str, Field(description="The search query.")],
+    time_range: Annotated[str, Field(description="Set 'day', 'week', 'month', or 'year' when recency matters (news, releases, current data). '' = any time.")] = "",
+    topic: Annotated[str, Field(description="'news' for current events and breaking stories, 'finance' for markets, tickers, and companies, 'general' (default) for everything else.")] = "general",
+    depth: Annotated[str, Field(description="'advanced' (default) for best relevance; 'basic' only for quick, simple lookups.")] = "advanced",
 ) -> str:
     if topic not in ("general", "news", "finance"):
         return _err("topic must be 'general', 'news', or 'finance'")
@@ -393,29 +395,19 @@ _SEARCH_ENGINES = {"searxng": _search_searxng, "tavily": _search_tavily}
 
 _SEARCH_DESCRIPTIONS = {
     ("searxng", "primary"):
-        "Search the web. Returns a list of results with title, url, snippet, and source engine. "
-        "time_range: '' for any time, or 'day' / 'month' / 'year'. "
-        "language: language code like 'en', or 'all'.",
+        "Search the web. Returns a list of results with title, url, snippet, and source engine.",
     ("tavily", "primary"):
-        "Search the web via the Tavily API. Returns a list of results with title, url, snippet, and relevance score (0-1). "
-        "time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. "
-        "topic: 'general' (default), 'news' for current events, or 'finance'. "
-        "depth: 'advanced' (default, best relevance) or 'basic' (faster).",
+        "Search the web via the Tavily API. Returns a list of results with title, url, snippet, and relevance score (0-1).",
     ("searxng", "backup"):
         "Backup web search via SearXNG metasearch — independent of web_search's engine. "
         "Use when web_search results don't serve the query: off-topic or low-quality hits, snippets too thin to answer from, "
         "stale pages, few or no results, or the primary erroring (e.g. quota exhausted). "
-        "Returns a list of results with title, url, snippet, and source engine. "
-        "time_range: '' for any time, or 'day' / 'month' / 'year'. "
-        "language: language code like 'en', or 'all'.",
+        "Returns a list of results with title, url, snippet, and source engine.",
     ("tavily", "backup"):
         "Backup web search via the Tavily API — higher quality, independent of web_search's engines. "
         "Use when web_search results don't serve the query: off-topic or low-quality hits, snippets too thin to answer from, "
         "stale pages, few or no results, or degraded (rate-limited / CAPTCHA-blocked) engines. "
-        "Returns a list of results with title, url, snippet, and relevance score (0-1). "
-        "time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. "
-        "topic: 'general' (default), 'news' for current events, or 'finance'. "
-        "depth: 'advanced' (default, best relevance) or 'basic' (faster).",
+        "Returns a list of results with title, url, snippet, and relevance score (0-1).",
 }
 
 
@@ -455,8 +447,12 @@ _register_search_tools()
 if EXA_KEY:
 
     @mcp.tool()
-    def web_search_semantic(query: str, time_range: str = "", category: str = "") -> str:
-        """Semantic web search via the Exa API — finds pages by meaning rather than keywords. Use for conceptual and discovery queries ("startups building X", "papers about Y approach") or category-restricted hunts; for ordinary keyword or navigational lookups use web_search. Returns a list of results with title, url, snippet, published date, and author. time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. category: '' for the whole web, or 'company' / 'people' / 'publication' (scholarly papers) / 'news' / 'personal site' / 'financial report'."""
+    def web_search_semantic(
+        query: Annotated[str, Field(description="What the page should be about, phrased as a description of the target page ('startups building home robots'), not keywords — this is semantic search.")],
+        time_range: Annotated[str, Field(description="Set 'day', 'week', 'month', or 'year' when recency matters (news, releases, current data). '' = any time.")] = "",
+        category: Annotated[str, Field(description="Set when the query clearly targets one corpus: 'publication' (academic papers), 'news', 'company', 'people', 'personal site' (blogs), 'financial report' (SEC filings / earnings). '' = whole web.")] = "",
+    ) -> str:
+        """Semantic web search via the Exa API — finds pages by meaning rather than keywords. Use for conceptual and discovery queries ("startups building X", "papers about Y approach") or category-restricted hunts; for ordinary keyword or navigational lookups use web_search. Returns a list of results with title, url, snippet, published date, and author."""
         categories = ("", "company", "people", "publication", "news", "personal site", "financial report")
         if category not in categories:
             return _err("category must be '' or one of: " + ", ".join(c for c in categories if c))
