@@ -1,6 +1,7 @@
 # Homelab MCP 🛠
 
-An MCP tool server for homelabs. Seven tools, three dependencies, one file.
+An MCP tool server for homelabs. Seven core tools plus an optional
+Tavily-backed backup search. Three dependencies, one file.
 
 Designed by SK. Built by Claude.
 
@@ -29,7 +30,7 @@ Listens on `:1603`. Roots default to `$PWD`; SearXNG defaults to
 ## How It Works
 
 ```
-MCP client ──► :1603 (homelab-mcp) ──► Claude CLI / SearXNG / filesystem
+MCP client ──► :1603 (homelab-mcp) ──► Claude CLI / SearXNG / Tavily / filesystem
 ```
 
 FastMCP over streamable HTTP. Each tool is a Python function decorated with
@@ -46,6 +47,12 @@ FastMCP over streamable HTTP. Each tool is a Python function decorated with
 | `grep_files` | Case-insensitive regex search across roots                    |
 | `web_search` | SearXNG-aggregated public web search                          |
 | `web_fetch`  | Fetch a URL (HTML, PDF, DOCX) and convert to Markdown         |
+| `web_search_backup`* | Higher-quality Tavily search — escalation for when `web_search` results are inadequate |
+
+`*` Registered only when `HOMELAB_MCP_TAVILY_KEY` is set. The tool's
+description tells the calling LLM to judge `web_search` result quality
+itself and escalate when they don't serve the query — there is no
+automatic fallback logic in the server.
 
 ## Configuration
 
@@ -57,6 +64,7 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_HOST`             | `0.0.0.0`                                          | Listen address                                                       |
 | `HOMELAB_MCP_PORT`             | `1603`                                             | Listen port                                                          |
 | `HOMELAB_MCP_SEARXNG`          | `http://localhost:8080`                            | SearXNG endpoint for `web_search`                                    |
+| `HOMELAB_MCP_TAVILY_KEY`       | (unset)                                            | Tavily API key. When set, the `web_search_backup` tool is registered |
 | `HOMELAB_MCP_CLAUDE_BIN`       | `claude`                                           | Claude CLI binary used by `ask_claude`. Default looks up `claude` on `$PATH`; set to an absolute path when the binary lives outside the service's `$PATH` (e.g. `/home/me/.local/bin/claude`). |
 | `HOMELAB_MCP_ROOTS`            | `$PWD`                                             | Colon-separated roots, like `$PATH`                                  |
 | `HOMELAB_MCP_SKIP_DIRS`        | (see below)                                        | Comma-separated dir names skipped by `glob_files` / `grep_files` |
@@ -110,6 +118,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.4   | 2026-08-02 | Optional `web_search_backup` tool — Tavily-backed escalation search, registered when `HOMELAB_MCP_TAVILY_KEY` is set. The calling LLM decides when SearXNG results aren't good enough; `web_search` itself is unchanged. |
 | 0.1.3   | 2026-05-08 | Pin MarkItDown extras (`pdf,docx,pptx,xlsx,xls,outlook`) so `read_doc` actually parses documents — was registered but inert in `0.1.2`. `start.sh logs` now follows the journal under systemd, the file otherwise. |
 | 0.1.2   | 2026-05-08 | New `read_doc` tool — reads local PDF / DOCX / PPTX / XLSX via MarkItDown. Config: `HOMELAB_MCP_DOC_MAX_CHARS` (default `200000`). |
 | 0.1.1   | 2026-05-08 | `HOMELAB_MCP_CLAUDE_BIN` env var lets deployments pin the Claude CLI binary path when it isn't on the service's `$PATH`. |

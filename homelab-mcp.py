@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 HOST       = os.environ.get("HOMELAB_MCP_HOST", "0.0.0.0")
 PORT       = int(os.environ.get("HOMELAB_MCP_PORT", "1603"))
 SEARXNG    = os.environ.get("HOMELAB_MCP_SEARXNG", "http://localhost:8080")
+TAVILY_KEY = os.environ.get("HOMELAB_MCP_TAVILY_KEY", "").strip()
 CLAUDE_BIN = os.environ.get("HOMELAB_MCP_CLAUDE_BIN", "claude")
 
 ROOTS = [
@@ -312,6 +313,57 @@ def web_fetch(url: str) -> str:
         text = text[:FETCH_MAX_CHARS] + f"\n\n... [truncated, {len(text)} chars total]"
 
     return text
+
+
+# ── tools · web · backup search (conditional on Tavily) ───────────
+# Registered only when HOMELAB_MCP_TAVILY_KEY is set. Escalation tier:
+# the model decides to call it when web_search results are inadequate.
+
+if TAVILY_KEY:
+
+    @mcp.tool()
+    def web_search_backup(
+        query: str,
+        time_range: str = "",
+        topic: str = "general",
+        depth: str = "advanced",
+    ) -> str:
+        """Backup web search via the Tavily API — higher quality, independent of web_search's engines. Use when web_search results don't serve the query: off-topic or low-quality hits, snippets too thin to answer from, stale pages, few or no results, or degraded (rate-limited / CAPTCHA-blocked) engines. Returns a list of results with title, url, snippet, and relevance score (0-1). time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. topic: 'general' (default), 'news' for current events, or 'finance'. depth: 'advanced' (default, best relevance) or 'basic' (faster)."""
+        if topic not in ("general", "news", "finance"):
+            return _err("topic must be 'general', 'news', or 'finance'")
+        if depth not in ("advanced", "basic"):
+            return _err("depth must be 'advanced' or 'basic'")
+
+        body = {
+            "query": query,
+            "topic": topic,
+            "search_depth": depth,
+            "max_results": min(SEARCH_LIMIT, 20),
+        }
+        if time_range:
+            body["time_range"] = time_range
+
+        try:
+            resp = httpx.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {TAVILY_KEY}"},
+                json=body,
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            return _err(f"Tavily search failed: {e}")
+
+        results = [
+            {
+                "title":   r.get("title", ""),
+                "url":     r.get("url", ""),
+                "content": r.get("content", ""),
+                "score":   round(r.get("score") or 0, 3),
+            }
+            for r in resp.json().get("results", [])
+        ]
+        return json.dumps({"query": query, "count": len(results), "results": results}, indent=2)
 
 
 # ── main ──────────────────────────────────────────────────────────
