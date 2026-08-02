@@ -9,7 +9,9 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from markitdown import MarkItDown
@@ -21,7 +23,17 @@ HOST       = os.environ.get("HOMELAB_MCP_HOST", "0.0.0.0")
 PORT       = int(os.environ.get("HOMELAB_MCP_PORT", "1603"))
 SEARXNG    = os.environ.get("HOMELAB_MCP_SEARXNG", "http://localhost:8080")
 TAVILY_KEY = os.environ.get("HOMELAB_MCP_TAVILY_KEY", "").strip()
+EXA_KEY    = os.environ.get("HOMELAB_MCP_EXA_KEY", "").strip()
 CLAUDE_BIN = os.environ.get("HOMELAB_MCP_CLAUDE_BIN", "claude")
+
+# Which engine backs web_search (primary) and web_search_backup (backup).
+# Choices: searxng, tavily ('none' disables backup). Defaults preserve the
+# pre-v0.1.5 behavior: searxng primary; tavily backup iff its key is set.
+SEARCH_PRIMARY = os.environ.get("HOMELAB_MCP_SEARCH_PRIMARY", "searxng").strip().lower()
+SEARCH_BACKUP  = os.environ.get(
+    "HOMELAB_MCP_SEARCH_BACKUP",
+    "searxng" if SEARCH_PRIMARY == "tavily" else ("tavily" if TAVILY_KEY else "none"),
+).strip().lower()
 
 ROOTS = [
     os.path.realpath(os.path.expanduser(p))
@@ -74,14 +86,26 @@ def _walk(base: str):
 
 # ── tools · claude ────────────────────────────────────────────────
 
+_EFFORT_TIMEOUTS = {"low": 300, "medium": 600, "high": 900, "xhigh": 1200, "max": 1800}
+
+
 @mcp.tool()
 def ask_claude(
     prompt: str,
     model: str = "sonnet",
     effort: str = "medium",
-    timeout: int = 600,
+    timeout: int = 0,
 ) -> str:
-    """Ask Claude (a more capable model) when you need deep research, complex reasoning, or analysis you can't do yourself. Returns Claude's answer. model: 'sonnet' or 'opus'. effort: 'medium' or 'max'. timeout: seconds (default 600)."""
+    """Ask Claude (a more capable model) when you need deep research, complex reasoning, or analysis you can't do yourself. Returns Claude's answer. model: 'sonnet' (fast, capable) or 'opus' (hardest problems). effort: 'low' / 'medium' / 'high' / 'xhigh' / 'max' — use 'high' or above for hard problems. timeout: seconds; 0 (default) scales with model and effort (5-30 min)."""
+    if model not in ("sonnet", "opus"):
+        return _err("model must be 'sonnet' or 'opus'")
+    if effort not in _EFFORT_TIMEOUTS:
+        return _err("effort must be 'low', 'medium', 'high', 'xhigh', or 'max'")
+    if timeout <= 0:
+        timeout = _EFFORT_TIMEOUTS[effort]
+        if model == "opus":
+            timeout = min(int(timeout * 1.5), 1800)
+
     cmd = [
         CLAUDE_BIN, "-p",
         "--model", model,
@@ -116,7 +140,10 @@ def ask_claude(
     if proc.returncode != 0:
         return _err(f"Claude failed: {stderr[:500]}")
 
-    data = json.loads(stdout)
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return _err(f"Unexpected Claude CLI output: {stdout[:300]}")
     usage = data.get("usage", {})
 
     return json.dumps({
@@ -262,14 +289,16 @@ def grep_files(
 
 
 # ── tools · web ───────────────────────────────────────────────────
+# web_search / web_search_backup are registered from the engine functions
+# below according to SEARCH_PRIMARY / SEARCH_BACKUP — see the registration
+# block after the engines. Exa is deliberately not a role choice; it has
+# its own tool (web_search_semantic, further down).
 
-@mcp.tool()
-def web_search(
+def _search_searxng(
     query: str,
     time_range: str = "",
     language: str = "all",
 ) -> str:
-    """Search the web. Returns a list of results with title, url, snippet, and source engine. time_range: '' for any time, or 'day' / 'month' / 'year'. language: language code like 'en', or 'all'."""
     params: dict = {"q": query, "format": "json"}
     if time_range:
         params["time_range"] = time_range
@@ -315,51 +344,156 @@ def web_fetch(url: str) -> str:
     return text
 
 
-# ── tools · web · backup search (conditional on Tavily) ───────────
-# Registered only when HOMELAB_MCP_TAVILY_KEY is set. Escalation tier:
-# the model decides to call it when web_search results are inadequate.
+def _search_tavily(
+    query: str,
+    time_range: str = "",
+    topic: str = "general",
+    depth: str = "advanced",
+) -> str:
+    if topic not in ("general", "news", "finance"):
+        return _err("topic must be 'general', 'news', or 'finance'")
+    if depth not in ("advanced", "basic"):
+        return _err("depth must be 'advanced' or 'basic'")
 
-if TAVILY_KEY:
+    body = {
+        "query": query,
+        "topic": topic,
+        "search_depth": depth,
+        "max_results": min(SEARCH_LIMIT, 20),
+    }
+    if time_range:
+        body["time_range"] = time_range
+
+    try:
+        resp = httpx.post(
+            "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {TAVILY_KEY}"},
+            json=body,
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        return _err(f"Tavily search failed: {e}")
+
+    results = [
+        {
+            "title":   r.get("title", ""),
+            "url":     r.get("url", ""),
+            "content": r.get("content", ""),
+            "score":   round(r.get("score") or 0, 3),
+        }
+        for r in resp.json().get("results", [])
+    ]
+    return json.dumps({"query": query, "count": len(results), "results": results}, indent=2)
+
+
+# ── tools · web · role registration ───────────────────────────────
+
+_SEARCH_ENGINES = {"searxng": _search_searxng, "tavily": _search_tavily}
+
+_SEARCH_DESCRIPTIONS = {
+    ("searxng", "primary"):
+        "Search the web. Returns a list of results with title, url, snippet, and source engine. "
+        "time_range: '' for any time, or 'day' / 'month' / 'year'. "
+        "language: language code like 'en', or 'all'.",
+    ("tavily", "primary"):
+        "Search the web via the Tavily API. Returns a list of results with title, url, snippet, and relevance score (0-1). "
+        "time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. "
+        "topic: 'general' (default), 'news' for current events, or 'finance'. "
+        "depth: 'advanced' (default, best relevance) or 'basic' (faster).",
+    ("searxng", "backup"):
+        "Backup web search via SearXNG metasearch — independent of web_search's engine. "
+        "Use when web_search results don't serve the query: off-topic or low-quality hits, snippets too thin to answer from, "
+        "stale pages, few or no results, or the primary erroring (e.g. quota exhausted). "
+        "Returns a list of results with title, url, snippet, and source engine. "
+        "time_range: '' for any time, or 'day' / 'month' / 'year'. "
+        "language: language code like 'en', or 'all'.",
+    ("tavily", "backup"):
+        "Backup web search via the Tavily API — higher quality, independent of web_search's engines. "
+        "Use when web_search results don't serve the query: off-topic or low-quality hits, snippets too thin to answer from, "
+        "stale pages, few or no results, or degraded (rate-limited / CAPTCHA-blocked) engines. "
+        "Returns a list of results with title, url, snippet, and relevance score (0-1). "
+        "time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. "
+        "topic: 'general' (default), 'news' for current events, or 'finance'. "
+        "depth: 'advanced' (default, best relevance) or 'basic' (faster).",
+}
+
+
+def _register_search_tools() -> None:
+    if SEARCH_PRIMARY not in _SEARCH_ENGINES:
+        sys.exit(f"HOMELAB_MCP_SEARCH_PRIMARY={SEARCH_PRIMARY!r}: must be 'searxng' or 'tavily'")
+    if SEARCH_BACKUP not in (*_SEARCH_ENGINES, "none"):
+        sys.exit(f"HOMELAB_MCP_SEARCH_BACKUP={SEARCH_BACKUP!r}: must be 'searxng', 'tavily', or 'none'")
+    if SEARCH_PRIMARY == SEARCH_BACKUP:
+        sys.exit("HOMELAB_MCP_SEARCH_PRIMARY and HOMELAB_MCP_SEARCH_BACKUP must differ")
+    if SEARCH_PRIMARY == "tavily" and not TAVILY_KEY:
+        sys.exit("HOMELAB_MCP_SEARCH_PRIMARY=tavily requires HOMELAB_MCP_TAVILY_KEY")
+
+    mcp.tool(
+        name="web_search",
+        description=_SEARCH_DESCRIPTIONS[(SEARCH_PRIMARY, "primary")],
+    )(_SEARCH_ENGINES[SEARCH_PRIMARY])
+
+    if SEARCH_BACKUP == "none":
+        return
+    if SEARCH_BACKUP == "tavily" and not TAVILY_KEY:
+        print("web_search_backup disabled: HOMELAB_MCP_SEARCH_BACKUP=tavily but HOMELAB_MCP_TAVILY_KEY is unset")
+        return
+    mcp.tool(
+        name="web_search_backup",
+        description=_SEARCH_DESCRIPTIONS[(SEARCH_BACKUP, "backup")],
+    )(_SEARCH_ENGINES[SEARCH_BACKUP])
+
+
+_register_search_tools()
+
+
+# ── tools · web · semantic search (conditional on Exa) ────────────
+# Registered only when HOMELAB_MCP_EXA_KEY is set. Not a role choice for
+# primary/backup — a different capability: search by meaning, not keywords.
+
+if EXA_KEY:
 
     @mcp.tool()
-    def web_search_backup(
-        query: str,
-        time_range: str = "",
-        topic: str = "general",
-        depth: str = "advanced",
-    ) -> str:
-        """Backup web search via the Tavily API — higher quality, independent of web_search's engines. Use when web_search results don't serve the query: off-topic or low-quality hits, snippets too thin to answer from, stale pages, few or no results, or degraded (rate-limited / CAPTCHA-blocked) engines. Returns a list of results with title, url, snippet, and relevance score (0-1). time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. topic: 'general' (default), 'news' for current events, or 'finance'. depth: 'advanced' (default, best relevance) or 'basic' (faster)."""
-        if topic not in ("general", "news", "finance"):
-            return _err("topic must be 'general', 'news', or 'finance'")
-        if depth not in ("advanced", "basic"):
-            return _err("depth must be 'advanced' or 'basic'")
+    def web_search_semantic(query: str, time_range: str = "", category: str = "") -> str:
+        """Semantic web search via the Exa API — finds pages by meaning rather than keywords. Use for conceptual and discovery queries ("startups building X", "papers about Y approach") or category-restricted hunts; for ordinary keyword or navigational lookups use web_search. Returns a list of results with title, url, snippet, published date, and author. time_range: '' for any time, or 'day' / 'week' / 'month' / 'year'. category: '' for the whole web, or 'company' / 'people' / 'publication' (scholarly papers) / 'news' / 'personal site' / 'financial report'."""
+        categories = ("", "company", "people", "publication", "news", "personal site", "financial report")
+        if category not in categories:
+            return _err("category must be '' or one of: " + ", ".join(c for c in categories if c))
+        days = {"": None, "day": 1, "week": 7, "month": 31, "year": 365}
+        if time_range not in days:
+            return _err("time_range must be '', 'day', 'week', 'month', or 'year'")
 
         body = {
             "query": query,
-            "topic": topic,
-            "search_depth": depth,
-            "max_results": min(SEARCH_LIMIT, 20),
+            "type": "auto",
+            "numResults": min(SEARCH_LIMIT, 100),
+            "contents": {"highlights": True},
         }
-        if time_range:
-            body["time_range"] = time_range
+        if category:
+            body["category"] = category
+        if days[time_range]:
+            start = datetime.now(timezone.utc) - timedelta(days=days[time_range])
+            body["startPublishedDate"] = start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         try:
             resp = httpx.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {TAVILY_KEY}"},
+                "https://api.exa.ai/search",
+                headers={"x-api-key": EXA_KEY},
                 json=body,
                 timeout=30,
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            return _err(f"Tavily search failed: {e}")
+            return _err(f"Exa search failed: {e}")
 
         results = [
             {
-                "title":   r.get("title", ""),
-                "url":     r.get("url", ""),
-                "content": r.get("content", ""),
-                "score":   round(r.get("score") or 0, 3),
+                "title":     r.get("title") or "",
+                "url":       r.get("url", ""),
+                "content":   " … ".join(r.get("highlights") or []),
+                "published": (r.get("publishedDate") or "")[:10],
+                "author":    r.get("author") or "",
             }
             for r in resp.json().get("results", [])
         ]

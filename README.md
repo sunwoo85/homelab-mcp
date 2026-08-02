@@ -1,7 +1,7 @@
 # Homelab MCP 🛠
 
-An MCP tool server for homelabs. Seven core tools plus an optional
-Tavily-backed backup search. Three dependencies, one file.
+An MCP tool server for homelabs. Seven core tools plus optional backup
+and semantic web search. Three dependencies, one file.
 
 Designed by SK. Built by Claude.
 
@@ -30,7 +30,7 @@ Listens on `:1603`. Roots default to `$PWD`; SearXNG defaults to
 ## How It Works
 
 ```
-MCP client ──► :1603 (homelab-mcp) ──► Claude CLI / SearXNG / Tavily / filesystem
+MCP client ──► :1603 (homelab-mcp) ──► Claude CLI / SearXNG / Tavily / Exa / filesystem
 ```
 
 FastMCP over streamable HTTP. Each tool is a Python function decorated with
@@ -40,19 +40,20 @@ FastMCP over streamable HTTP. Each tool is a Python function decorated with
 
 | Tool         | Purpose                                                       |
 |--------------|---------------------------------------------------------------|
-| `ask_claude` | Delegate to Claude (opus or sonnet, medium or max)            |
+| `ask_claude` | Delegate to Claude (sonnet or opus; effort low–max; timeout auto-scales) |
 | `read_file`  | Read a UTF-8 text file inside a configured root               |
 | `read_doc`   | Read a local PDF / DOCX / PPTX / XLSX / XLS / MSG and convert to Markdown |
 | `glob_files` | Find files by glob pattern across roots                       |
 | `grep_files` | Case-insensitive regex search across roots                    |
-| `web_search` | SearXNG-aggregated public web search                          |
+| `web_search` | Web search via the configured primary engine (SearXNG default, or Tavily) |
 | `web_fetch`  | Fetch a URL (HTML, PDF, DOCX) and convert to Markdown         |
-| `web_search_backup`* | Higher-quality Tavily search — escalation for when `web_search` results are inadequate |
+| `web_search_backup`* | Escalation search via the configured backup engine — for when `web_search` results are inadequate |
+| `web_search_semantic`* | Exa neural search — finds pages by meaning; conceptual and discovery queries |
 
-`*` Registered only when `HOMELAB_MCP_TAVILY_KEY` is set. The tool's
-description tells the calling LLM to judge `web_search` result quality
-itself and escalate when they don't serve the query — there is no
-automatic fallback logic in the server.
+`*` Conditional: `web_search_backup` registers when a backup engine is
+configured and usable; `web_search_semantic` when `HOMELAB_MCP_EXA_KEY`
+is set. Escalation is LLM-judged via the tool descriptions — there is no
+automatic fallback logic in the server. See **Search engines** below.
 
 ## Configuration
 
@@ -64,7 +65,10 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_HOST`             | `0.0.0.0`                                          | Listen address                                                       |
 | `HOMELAB_MCP_PORT`             | `1603`                                             | Listen port                                                          |
 | `HOMELAB_MCP_SEARXNG`          | `http://localhost:8080`                            | SearXNG endpoint for `web_search`                                    |
-| `HOMELAB_MCP_TAVILY_KEY`       | (unset)                                            | Tavily API key. When set, the `web_search_backup` tool is registered |
+| `HOMELAB_MCP_TAVILY_KEY`       | (unset)                                            | Tavily API key — enables `tavily` as an engine (default backup when set) |
+| `HOMELAB_MCP_EXA_KEY`          | (unset)                                            | Exa API key. When set, the `web_search_semantic` tool is registered  |
+| `HOMELAB_MCP_SEARCH_PRIMARY`   | `searxng`                                          | Engine behind `web_search`: `searxng` or `tavily`                    |
+| `HOMELAB_MCP_SEARCH_BACKUP`    | `tavily` if its key is set, else `none`            | Engine behind `web_search_backup`: `searxng`, `tavily`, or `none`    |
 | `HOMELAB_MCP_CLAUDE_BIN`       | `claude`                                           | Claude CLI binary used by `ask_claude`. Default looks up `claude` on `$PATH`; set to an absolute path when the binary lives outside the service's `$PATH` (e.g. `/home/me/.local/bin/claude`). |
 | `HOMELAB_MCP_ROOTS`            | `$PWD`                                             | Colon-separated roots, like `$PATH`                                  |
 | `HOMELAB_MCP_SKIP_DIRS`        | (see below)                                        | Comma-separated dir names skipped by `glob_files` / `grep_files` |
@@ -96,6 +100,28 @@ HOMELAB_MCP_ROOTS=/home/me/projects:/home/me/services
 `ask_claude` requires Claude CLI — the `claude` binary on `$PATH`. The tool
 registers either way; calls fail with a clean error if `claude` is missing.
 
+### Search engines
+
+`web_search` and `web_search_backup` are backed by interchangeable engines
+chosen in `.env` — tool names stay fixed; descriptions and parameters
+follow the engine:
+
+```bash
+HOMELAB_MCP_SEARCH_PRIMARY=searxng   # searxng | tavily
+HOMELAB_MCP_SEARCH_BACKUP=tavily     # searxng | tavily | none
+```
+
+Defaults: SearXNG primary; Tavily backup when its key is set, `none`
+otherwise. With `tavily` as primary, the backup defaults to `searxng`.
+Misconfiguration — unknown engine, same engine twice, Tavily as primary
+without its key — exits at startup with a one-line reason; a backup
+engine missing its key logs a warning and skips the tool.
+
+Exa is deliberately not a role choice. With `HOMELAB_MCP_EXA_KEY` set it
+registers separately as `web_search_semantic`: search by meaning rather
+than keywords, with optional category restriction (companies, people,
+scholarly publications, news, personal sites, financial reports).
+
 ## Process Manager
 
 ```bash
@@ -118,6 +144,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.5   | 2026-08-02 | Configurable search engines: `HOMELAB_MCP_SEARCH_PRIMARY` / `_BACKUP` choose SearXNG or Tavily behind `web_search` / `web_search_backup`; descriptions and parameters follow the engine. New `web_search_semantic` tool — Exa neural search, registered when `HOMELAB_MCP_EXA_KEY` is set. `ask_claude` refreshed: full effort range (`low`–`max`), timeout auto-scales with model and effort, model/effort validated. |
 | 0.1.4   | 2026-08-02 | Optional `web_search_backup` tool — Tavily-backed escalation search, registered when `HOMELAB_MCP_TAVILY_KEY` is set. The calling LLM decides when SearXNG results aren't good enough; `web_search` itself is unchanged. |
 | 0.1.3   | 2026-05-08 | Pin MarkItDown extras (`pdf,docx,pptx,xlsx,xls,outlook`) so `read_doc` actually parses documents — was registered but inert in `0.1.2`. `start.sh logs` now follows the journal under systemd, the file otherwise. |
 | 0.1.2   | 2026-05-08 | New `read_doc` tool — reads local PDF / DOCX / PPTX / XLSX via MarkItDown. Config: `HOMELAB_MCP_DOC_MAX_CHARS` (default `200000`). |
