@@ -28,6 +28,9 @@ TAVILY_KEY = os.environ.get("HOMELAB_MCP_TAVILY_KEY", "").strip()
 EXA_KEY    = os.environ.get("HOMELAB_MCP_EXA_KEY", "").strip()
 CLAUDE_BIN = os.environ.get("HOMELAB_MCP_CLAUDE_BIN", "claude")
 
+TELEGRAM_TOKEN   = os.environ.get("HOMELAB_MCP_TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("HOMELAB_MCP_TELEGRAM_CHAT_ID", "").strip()
+
 # Which engine backs web_search (primary) and web_search_backup (backup).
 # Choices: searxng, tavily ('none' disables backup). Defaults preserve the
 # pre-v0.1.5 behavior: searxng primary; tavily backup iff its key is set.
@@ -494,6 +497,47 @@ if EXA_KEY:
             for r in resp.json().get("results", [])
         ]
         return json.dumps({"query": query, "count": len(results), "results": results}, indent=2)
+
+
+# ── tools · messaging (conditional on Telegram config) ────────────
+# Registered only when both HOMELAB_MCP_TELEGRAM_TOKEN and
+# HOMELAB_MCP_TELEGRAM_CHAT_ID are set.
+
+if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+
+    @mcp.tool()
+    def send_message(
+        text: Annotated[str, Field(description="Message body. Plain text, or Telegram HTML for formatting: <b> <i> <u> <s> <code> <pre> <a href> <blockquote>. Escape literal <, >, & as &lt; &gt; &amp;. Max 4096 chars; longer is truncated.")],
+    ) -> str:
+        """Send a message to the homelab owner (delivered to their Telegram). Use when the owner should hear about something: work finished, a finding worth flagging, or an explicit ask to be notified."""
+        suffix = "\n… [truncated]"
+        if len(text) > 4096:
+            text = text[:4096 - len(suffix)] + suffix
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        body = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True}}
+        try:
+            resp = httpx.post(url, json=body, timeout=30)
+            if resp.status_code == 400 and "can't parse entities" in resp.text:
+                body.pop("parse_mode")  # malformed HTML → deliver as plain text
+                resp = httpx.post(url, json=body, timeout=30)
+        except httpx.HTTPError as e:
+            # httpx error strings embed the request URL — scrub the token
+            return _err(f"Telegram send failed: {str(e).replace(TELEGRAM_TOKEN, '***')}")
+
+        data = resp.json()
+        if not data.get("ok"):
+            return _err(f"Telegram send failed: {data.get('description', resp.status_code)}")
+
+        return json.dumps({
+            "sent":       True,
+            "message_id": data["result"].get("message_id"),
+            "format":     "html" if "parse_mode" in body else "plain",
+        }, indent=2)
+
+elif TELEGRAM_TOKEN or TELEGRAM_CHAT_ID:
+    print("send_message disabled: HOMELAB_MCP_TELEGRAM_TOKEN and HOMELAB_MCP_TELEGRAM_CHAT_ID must both be set")
 
 
 # ── main ──────────────────────────────────────────────────────────
