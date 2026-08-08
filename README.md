@@ -1,16 +1,18 @@
 # Homelab MCP 🛠
 
 An MCP tool server for homelabs. Seven core tools plus optional backup
-search, semantic search, and owner messaging. Three dependencies, one file.
+search and fetch, site mapping and crawling, semantic search and
+similar-page discovery, and owner messaging. Three dependencies, one file.
 
 Designed by SK. Built by Claude.
 
 ## Overview
 
-A FastMCP HTTP server exposing seven tools to MCP clients (Claude Code, IDE
-plugins, custom agents). Local or hosted LLMs use these tools to read files,
-search the web, fetch URLs, and delegate work to Claude. Around 300 lines
-of Python, single port, environment-driven configuration.
+A FastMCP HTTP server exposing seven core tools (fourteen with every option
+enabled) to MCP clients (Claude Code, IDE plugins, custom agents). Local or
+hosted LLMs use these tools to read files, search the web, fetch and crawl
+URLs, and delegate work to Claude. Around 700 lines of Python, single port,
+environment-driven configuration.
 
 ## Quick Start
 
@@ -48,12 +50,18 @@ FastMCP over streamable HTTP. Each tool is a Python function decorated with
 | `web_search` | Web search via the configured primary engine (SearXNG default, or Tavily) |
 | `web_fetch`  | Fetch a URL (HTML, PDF, DOCX) and convert to Markdown         |
 | `web_search_backup`* | Escalation search via the configured backup engine — for when `web_search` results are inadequate |
+| `web_fetch_backup`* | Escalation fetch via Tavily Extract — a rendering fetch for pages `web_fetch` can't serve (JS/SPA, bot-blocked) |
+| `web_map`* | Map a site's URL structure via Tavily — discover page URLs without fetching content |
+| `web_crawl`* | Crawl a site via Tavily — Markdown from many pages in one call, within a character budget |
 | `web_search_semantic`* | Exa neural search — finds pages by meaning; conceptual and discovery queries |
+| `web_similar`* | Exa "more like this" — pages similar to a reference URL |
 | `send_message`* | Message the homelab owner via Telegram (plain text or Telegram HTML) |
 
 `*` Conditional: `web_search_backup` registers when a backup engine is
-configured and usable; `web_search_semantic` when `HOMELAB_MCP_EXA_KEY`
-is set; `send_message` when both `HOMELAB_MCP_TELEGRAM_TOKEN` and
+configured and usable; `web_fetch_backup`, `web_map`, and `web_crawl` when
+`HOMELAB_MCP_TAVILY_KEY` is set (independent of the engine roles);
+`web_search_semantic` and `web_similar` when `HOMELAB_MCP_EXA_KEY` is set;
+`send_message` when both `HOMELAB_MCP_TELEGRAM_TOKEN` and
 `HOMELAB_MCP_TELEGRAM_CHAT_ID` are set. Escalation is LLM-judged via the
 tool descriptions — there is no automatic fallback logic in the server.
 See **Search engines** below.
@@ -68,8 +76,8 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_HOST`             | `0.0.0.0`                                          | Listen address                                                       |
 | `HOMELAB_MCP_PORT`             | `1603`                                             | Listen port                                                          |
 | `HOMELAB_MCP_SEARXNG`          | `http://localhost:8080`                            | SearXNG endpoint for `web_search`                                    |
-| `HOMELAB_MCP_TAVILY_KEY`       | (unset)                                            | Tavily API key — enables `tavily` as an engine (default backup when set) |
-| `HOMELAB_MCP_EXA_KEY`          | (unset)                                            | Exa API key. When set, the `web_search_semantic` tool is registered  |
+| `HOMELAB_MCP_TAVILY_KEY`       | (unset)                                            | Tavily API key — enables `tavily` as an engine (default backup when set) plus `web_map`, `web_crawl`, `web_fetch_backup` |
+| `HOMELAB_MCP_EXA_KEY`          | (unset)                                            | Exa API key. When set, `web_search_semantic` and `web_similar` are registered |
 | `HOMELAB_MCP_TELEGRAM_TOKEN`   | (unset)                                            | Telegram bot token from @BotFather — see **Telegram setup**          |
 | `HOMELAB_MCP_TELEGRAM_CHAT_ID` | (unset)                                            | Telegram chat to deliver to. Both set → `send_message` is registered |
 | `HOMELAB_MCP_SEARCH_PRIMARY`   | `searxng`                                          | Engine behind `web_search`: `searxng` or `tavily`                    |
@@ -81,8 +89,11 @@ All via environment variables. Drop them in a `.env` next to `start.sh`;
 | `HOMELAB_MCP_GLOB_LIMIT`       | `200`                                              | Result cap for `glob_files`                                          |
 | `HOMELAB_MCP_GREP_LIMIT`       | `50`                                               | Default `max_results` for `grep_files`                               |
 | `HOMELAB_MCP_SEARCH_LIMIT`     | `20`                                               | Result cap for `web_search`                                          |
-| `HOMELAB_MCP_FETCH_MAX_CHARS`  | `50000`                                            | Character cap for `web_fetch` output                                 |
+| `HOMELAB_MCP_FETCH_MAX_CHARS`  | `50000`                                            | Character cap for `web_fetch` / `web_fetch_backup` output            |
 | `HOMELAB_MCP_DOC_MAX_CHARS`    | `200000`                                           | Character cap for `read_doc` output                                  |
+| `HOMELAB_MCP_MAP_LIMIT`        | `100`                                              | URL cap for `web_map`                                                |
+| `HOMELAB_MCP_CRAWL_LIMIT`      | `20`                                               | Page cap for `web_crawl`                                             |
+| `HOMELAB_MCP_CRAWL_MAX_CHARS`  | `100000`                                           | Total character budget for `web_crawl` output, shared across pages   |
 
 **Roots** are the directories the server may read, glob, and grep within.
 The file tools refuse paths that resolve outside this list. `HOMELAB_MCP_ROOTS`
@@ -123,9 +134,16 @@ without its key — exits at startup with a one-line reason; a backup
 engine missing its key logs a warning and skips the tool.
 
 Exa is deliberately not a role choice. With `HOMELAB_MCP_EXA_KEY` set it
-registers separately as `web_search_semantic`: search by meaning rather
-than keywords, with optional category restriction (companies, people,
-scholarly publications, news, personal sites, financial reports).
+registers two tools of its own: `web_search_semantic` — search by meaning
+rather than keywords, with optional category restriction (companies, people,
+scholarly publications, news, personal sites, financial reports) — and
+`web_similar`, which finds pages similar to a reference URL.
+
+Likewise, `HOMELAB_MCP_TAVILY_KEY` unlocks three tools beyond the engine
+roles: `web_map` (discover a site's URLs without fetching content),
+`web_crawl` (Markdown from many pages in one call), and `web_fetch_backup`
+(a rendering fetch for JS-heavy or bot-blocked pages that `web_fetch` —
+plain HTTP + MarkItDown — can't serve).
 
 ### Telegram setup
 
@@ -168,6 +186,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.8   | 2026-08-08 | Web capability expansion, no new infra or dependencies: `web_map`, `web_crawl`, `web_fetch_backup` (Tavily Map / Crawl / Extract — registered when `HOMELAB_MCP_TAVILY_KEY` is set, independent of the engine roles) and `web_similar` (Exa findSimilar). `web_fetch_backup` is the rendering escalation for `web_fetch` on JS-rendered pages. New caps: `HOMELAB_MCP_MAP_LIMIT`, `HOMELAB_MCP_CRAWL_LIMIT`, `HOMELAB_MCP_CRAWL_MAX_CHARS`. |
 | 0.1.7   | 2026-08-06 | New `send_message` tool — message the homelab owner via a Telegram bot; registered when `HOMELAB_MCP_TELEGRAM_TOKEN` + `HOMELAB_MCP_TELEGRAM_CHAT_ID` are set. Telegram HTML with plain-text fallback on parse errors; 4096-char truncation; link previews off. |
 | 0.1.6   | 2026-08-02 | Search tools: per-parameter schema descriptions with when-to-use triggers (calling LLMs were sending `query` only and ignoring `time_range`/`topic`/`category`); tool descriptions slimmed accordingly. No behavior change. |
 | 0.1.5   | 2026-08-02 | Configurable search engines: `HOMELAB_MCP_SEARCH_PRIMARY` / `_BACKUP` choose SearXNG or Tavily behind `web_search` / `web_search_backup`; descriptions and parameters follow the engine. New `web_search_semantic` tool — Exa neural search, registered when `HOMELAB_MCP_EXA_KEY` is set. `ask_claude` refreshed: full effort range (`low`–`max`), timeout auto-scales with model and effort, model/effort validated. |

@@ -59,6 +59,9 @@ GREP_LIMIT       = int(os.environ.get("HOMELAB_MCP_GREP_LIMIT", "50"))
 SEARCH_LIMIT     = int(os.environ.get("HOMELAB_MCP_SEARCH_LIMIT", "20"))
 FETCH_MAX_CHARS  = int(os.environ.get("HOMELAB_MCP_FETCH_MAX_CHARS", "50000"))
 DOC_MAX_CHARS    = int(os.environ.get("HOMELAB_MCP_DOC_MAX_CHARS", "200000"))
+MAP_LIMIT        = int(os.environ.get("HOMELAB_MCP_MAP_LIMIT", "100"))
+CRAWL_LIMIT      = int(os.environ.get("HOMELAB_MCP_CRAWL_LIMIT", "20"))
+CRAWL_MAX_CHARS  = int(os.environ.get("HOMELAB_MCP_CRAWL_MAX_CHARS", "100000"))
 
 mcp = FastMCP("Homelab MCP", host=HOST, port=PORT)
 _md = MarkItDown()
@@ -443,9 +446,134 @@ def _register_search_tools() -> None:
 _register_search_tools()
 
 
-# ── tools · web · semantic search (conditional on Exa) ────────────
-# Registered only when HOMELAB_MCP_EXA_KEY is set. Not a role choice for
-# primary/backup — a different capability: search by meaning, not keywords.
+# ── tools · web · tavily extras (conditional on Tavily key) ───────
+# Registered only when HOMELAB_MCP_TAVILY_KEY is set — independent of the
+# SEARCH_PRIMARY/BACKUP roles. Not role choices but distinct capabilities:
+# site mapping, site crawling, and a rendering fetch that sees what plain
+# HTTP + MarkItDown can't.
+
+if TAVILY_KEY:
+
+    @mcp.tool()
+    def web_map(
+        url: Annotated[str, Field(description="Root URL to map from — a site's homepage or a section like /docs.")],
+        max_depth: Annotated[int, Field(description="Link-hops to follow from the root: 1 (default) covers the section's own pages; higher only when content nests deeper — each level multiplies pages.")] = 1,
+        limit: Annotated[int, Field(description="Max URLs to discover.")] = 50,
+        instructions: Annotated[str, Field(description="Natural-language focus for the mapper ('only the API reference pages'). '' = the whole site.")] = "",
+    ) -> str:
+        """Map a site's URL structure via the Tavily API — discovers page URLs without fetching their content. Use to scope a web_crawl before running it, or to locate the right page to fetch when search can't find it. Returns {base_url, count, urls}."""
+        if not 1 <= max_depth <= 5:
+            return _err("max_depth must be 1-5")
+
+        body = {"url": url, "max_depth": max_depth, "limit": min(limit, MAP_LIMIT)}
+        if instructions:
+            body["instructions"] = instructions
+
+        try:
+            resp = httpx.post(
+                "https://api.tavily.com/map",
+                headers={"Authorization": f"Bearer {TAVILY_KEY}"},
+                json=body,
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            return _err(f"Tavily map failed: {e}")
+
+        data = resp.json()
+        urls = data.get("results", [])
+        return json.dumps({
+            "base_url": data.get("base_url", url),
+            "count":    len(urls),
+            "urls":     urls,
+        }, indent=2)
+
+    @mcp.tool()
+    def web_crawl(
+        url: Annotated[str, Field(description="Root URL to crawl from — a site's homepage or a section like /docs.")],
+        max_depth: Annotated[int, Field(description="Link-hops to follow from the root: 1 (default) covers the section's own pages; higher only when content nests deeper — each level multiplies pages.")] = 1,
+        limit: Annotated[int, Field(description="Max pages to fetch — keep small; every page adds latency and output.")] = 10,
+        instructions: Annotated[str, Field(description="Natural-language focus for the crawler ('only the API reference pages'). '' = everything reachable.")] = "",
+    ) -> str:
+        """Crawl a site via the Tavily API — fetches Markdown content from many pages in one call. Use when the task genuinely needs several pages of one site (a docs section, a multi-page article); for one page use web_fetch, for URL discovery alone use web_map. Slow — a large crawl can take a couple of minutes. Returns {base_url, count, results: [{url, content}]}, truncated to a server-wide character budget."""
+        if not 1 <= max_depth <= 5:
+            return _err("max_depth must be 1-5")
+
+        body = {"url": url, "max_depth": max_depth, "limit": min(limit, CRAWL_LIMIT)}
+        if instructions:
+            body["instructions"] = instructions
+
+        try:
+            resp = httpx.post(
+                "https://api.tavily.com/crawl",
+                headers={"Authorization": f"Bearer {TAVILY_KEY}"},
+                json=body,
+                # Tavily's own server-side timeout tops out at 150s; hanging up
+                # earlier forfeits work the API would still finish.
+                timeout=150,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            return _err(f"Tavily crawl failed: {e}")
+
+        data = resp.json()
+        pages = data.get("results", [])
+        total = sum(len(p.get("raw_content") or "") for p in pages)
+        share = CRAWL_MAX_CHARS // len(pages) if pages and total > CRAWL_MAX_CHARS else 0
+
+        results = []
+        for p in pages:
+            text = p.get("raw_content") or ""
+            if share and len(text) > share:
+                text = text[:share] + f"\n\n... [truncated, {len(text)} chars total]"
+            results.append({
+                "url":     p.get("url", ""),
+                "content": text,
+            })
+        return json.dumps({
+            "base_url": data.get("base_url", url),
+            "count":    len(results),
+            "results":  results,
+        }, indent=2)
+
+    @mcp.tool()
+    def web_fetch_backup(
+        url: Annotated[str, Field(description="The URL to fetch.")],
+        depth: Annotated[str, Field(description="'basic' (default) for most pages; 'advanced' also extracts tables and embedded data — use when basic output misses content you need.")] = "basic",
+    ) -> str:
+        """Backup URL fetch via the Tavily Extract API — a rendering fetch, independent of web_fetch's plain HTTP + MarkItDown pipeline. Use when web_fetch doesn't serve the page: a JS-rendered page returning skeletal or near-empty Markdown, a bot-blocked or erroring fetch, or content you'd see in a browser missing from the fetched text. Returns the page as plain Markdown text, like web_fetch."""
+        if depth not in ("basic", "advanced"):
+            return _err("depth must be 'basic' or 'advanced'")
+
+        try:
+            resp = httpx.post(
+                "https://api.tavily.com/extract",
+                headers={"Authorization": f"Bearer {TAVILY_KEY}"},
+                json={"urls": url, "extract_depth": depth},
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            return _err(f"Tavily extract failed: {e}")
+
+        data = resp.json()
+        results = data.get("results", [])
+        if not results:
+            failed = data.get("failed_results") or []
+            reason = (failed[0].get("error") or "no content returned") if failed else "no content returned"
+            return _err(f"Tavily extract failed: {reason}")
+
+        text = results[0].get("raw_content") or ""
+        if len(text) > FETCH_MAX_CHARS:
+            text = text[:FETCH_MAX_CHARS] + f"\n\n... [truncated, {len(text)} chars total]"
+
+        return text
+
+
+# ── tools · web · exa extras (conditional on Exa key) ─────────────
+# Registered only when HOMELAB_MCP_EXA_KEY is set. Not role choices —
+# different capabilities: search by meaning, and similar-page discovery
+# from a reference URL.
 
 if EXA_KEY:
 
@@ -497,6 +625,42 @@ if EXA_KEY:
             for r in resp.json().get("results", [])
         ]
         return json.dumps({"query": query, "count": len(results), "results": results}, indent=2)
+
+    @mcp.tool()
+    def web_similar(
+        url: Annotated[str, Field(description="The reference page. Results are pages about the same thing elsewhere on the web.")],
+        same_site: Annotated[bool, Field(description="Set true to also allow results from the reference page's own domain; default excludes them — the point is usually discovery elsewhere.")] = False,
+    ) -> str:
+        """Find pages similar to a given URL via the Exa API — 'more like this' discovery by meaning. Use when one good page is in hand (a paper, product, tool, article) and comparable alternatives, competitors, or related work are wanted; for text queries use web_search_semantic. Returns a list of results with title, url, snippet, published date, and author."""
+        body = {
+            "url": url,
+            "numResults": min(SEARCH_LIMIT, 100),
+            "excludeSourceDomain": not same_site,
+            "contents": {"highlights": True},
+        }
+
+        try:
+            resp = httpx.post(
+                "https://api.exa.ai/findSimilar",
+                headers={"x-api-key": EXA_KEY},
+                json=body,
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            return _err(f"Exa findSimilar failed: {e}")
+
+        results = [
+            {
+                "title":     r.get("title") or "",
+                "url":       r.get("url", ""),
+                "content":   " … ".join(r.get("highlights") or []),
+                "published": (r.get("publishedDate") or "")[:10],
+                "author":    r.get("author") or "",
+            }
+            for r in resp.json().get("results", [])
+        ]
+        return json.dumps({"url": url, "count": len(results), "results": results}, indent=2)
 
 
 # ── tools · messaging (conditional on Telegram config) ────────────
