@@ -537,19 +537,15 @@ if TAVILY_KEY:
         }, indent=2)
 
     @mcp.tool()
-    def web_fetch_backup(
-        url: Annotated[str, Field(description="The URL to fetch.")],
-        depth: Annotated[str, Field(description="'advanced' (default) fully renders the page — required for JS-heavy or never-before-fetched pages; 'basic' is lighter but often serves only pages already in Tavily's cache.")] = "advanced",
-    ) -> str:
+    def web_fetch_backup(url: str) -> str:
         """Backup URL fetch via the Tavily Extract API — a rendering fetch, independent of web_fetch's plain HTTP + MarkItDown pipeline. Use when web_fetch doesn't serve the page: a JS-rendered page returning skeletal or near-empty Markdown, a bot-blocked or erroring fetch, or content you'd see in a browser missing from the fetched text. Returns the page as plain Markdown text, like web_fetch."""
-        if depth not in ("basic", "advanced"):
-            return _err("depth must be 'basic' or 'advanced'")
-
+        # Always advanced: basic mostly serves Tavily's cache and fails on
+        # cold JS-rendered URLs — the exact pages this escalation exists for.
         try:
             resp = httpx.post(
                 "https://api.tavily.com/extract",
                 headers={"Authorization": f"Bearer {TAVILY_KEY}"},
-                json={"urls": url, "extract_depth": depth},
+                json={"urls": url, "extract_depth": "advanced"},
                 timeout=30,
             )
             resp.raise_for_status()
