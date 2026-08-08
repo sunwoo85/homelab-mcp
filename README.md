@@ -186,6 +186,7 @@ echo 'alias mcp="~/services/homelab-mcp/start.sh"' >> ~/.bashrc
 
 | Version | Date       | Description                                                                                       |
 |---------|------------|---------------------------------------------------------------------------------------------------|
+| 0.1.9   | 2026-08-08 | `web_fetch_backup` defaults to `advanced` extraction: Tavily's `basic` depth often serves only already-cached pages and fails on cold JS-rendered URLs — the exact case the tool exists for. `basic` remains available as the lighter option. |
 | 0.1.8   | 2026-08-08 | Web capability expansion, no new infra or dependencies: `web_map`, `web_crawl`, `web_fetch_backup` (Tavily Map / Crawl / Extract — registered when `HOMELAB_MCP_TAVILY_KEY` is set, independent of the engine roles) and `web_similar` (Exa findSimilar). `web_fetch_backup` is the rendering escalation for `web_fetch` on JS-rendered pages. New caps: `HOMELAB_MCP_MAP_LIMIT`, `HOMELAB_MCP_CRAWL_LIMIT`, `HOMELAB_MCP_CRAWL_MAX_CHARS`. |
 | 0.1.7   | 2026-08-06 | New `send_message` tool — message the homelab owner via a Telegram bot; registered when `HOMELAB_MCP_TELEGRAM_TOKEN` + `HOMELAB_MCP_TELEGRAM_CHAT_ID` are set. Telegram HTML with plain-text fallback on parse errors; 4096-char truncation; link previews off. |
 | 0.1.6   | 2026-08-02 | Search tools: per-parameter schema descriptions with when-to-use triggers (calling LLMs were sending `query` only and ignoring `time_range`/`topic`/`category`); tool descriptions slimmed accordingly. No behavior change. |
